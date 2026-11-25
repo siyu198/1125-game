@@ -145,12 +145,6 @@
       color: #7dd3fc;
     }
 
-    .buff-pill.pierce {
-      background: rgba(244, 114, 182, 0.18);
-      border: 1px solid rgba(244, 114, 182, 0.65);
-      color: #f9a8d4;
-    }
-
     .hud-actions {
       display: flex;
       align-items: center;
@@ -536,7 +530,7 @@
           <span class="legend-item"><span class="dot" style="background:#a78bfa"></span>発射: クリック / Space</span>
           <span class="legend-item"><span class="dot" style="background:#f97316"></span>爆弾ブロック: 周囲を巻き込み破壊</span>
           <span class="legend-item"><span class="dot" style="background:#94a3b8"></span>メタル壁: 破壊不可</span>
-          <span class="legend-item"><span class="dot" style="background:#34d399"></span>アイテム: WIDE / MULTI / PIERCE / +1UP</span>
+          <span class="legend-item"><span class="dot" style="background:#34d399"></span>アイテム: WIDE / MULTI / +1UP</span>
         </div>
       </section>
 
@@ -688,11 +682,10 @@
       ];
 
       const POWERUP_TYPES = [
-        { type: "WIDE",   label: "W", color: "#38bdf8", weight: 32, desc: "WIDE" },
-        { type: "MULTI",  label: "M", color: "#34d399", weight: 28, desc: "MULTI" },
-        { type: "PIERCE", label: "P", color: "#f472b6", weight: 20, desc: "PIERCE" },
-        { type: "SCORE",  label: "$", color: "#fbbf24", weight: 12, desc: "+500" },
-        { type: "LIFE",   label: "+", color: "#fb7185", weight: 8,  desc: "+1 LIFE" }
+        { type: "WIDE",  label: "W", color: "#38bdf8", weight: 40, desc: "WIDE" },
+        { type: "MULTI", label: "M", color: "#34d399", weight: 35, desc: "MULTI" },
+        { type: "SCORE", label: "$", color: "#fbbf24", weight: 15, desc: "+500" },
+        { type: "LIFE",  label: "+", color: "#fb7185", weight: 10, desc: "+1 LIFE" }
       ];
 
       // =========================================================
@@ -907,7 +900,6 @@
           flash: 0
         },
         wideTimer: 0,
-        pierceTimer: 0,
         balls: [],
         blocks: [],
         powerups: [],
@@ -1093,14 +1085,12 @@
           r: BALL_RADIUS,
           stuck,
           trail: [],
-          piercingBlocks: new Set(),
           sinceTouch: 0
         };
       }
 
       function resetPaddleAndBall() {
         game.wideTimer = 0;
-        game.pierceTimer = 0;
         game.paddle.w = PADDLE_BASE_W;
         game.paddle.targetW = PADDLE_BASE_W;
         game.paddle.x = (CANVAS_W - PADDLE_BASE_W) / 2;
@@ -1181,12 +1171,6 @@
           pill.textContent = `WIDE ${game.wideTimer.toFixed(1)}s`;
           hudBuffs.appendChild(pill);
         }
-        if (game.pierceTimer > 0) {
-          const pill = document.createElement("span");
-          pill.className = "buff-pill pierce";
-          pill.textContent = `PIERCE ${game.pierceTimer.toFixed(1)}s`;
-          hudBuffs.appendChild(pill);
-        }
       }
 
       function updateMuteButton() {
@@ -1261,8 +1245,6 @@
         if (p.type === "WIDE") {
           game.wideTimer = 12;
           game.paddle.targetW = PADDLE_WIDE_W;
-        } else if (p.type === "PIERCE") {
-          game.pierceTimer = 8;
         } else if (p.type === "SCORE") {
           game.score += 500;
         } else if (p.type === "LIFE") {
@@ -1306,10 +1288,10 @@
       // =========================================================
       // Block Destruction & Bomb Chain Reaction
       // =========================================================
-      function damageBlock(block, isPierce = false, fromExplosion = false) {
+      function damageBlock(block, instantBreak = false, fromExplosion = false) {
         if (block.kind === "wall" || block.hp <= 0) return;
 
-        if (isPierce) {
+        if (instantBreak) {
           block.hp = 0;
         } else {
           block.hp -= 1;
@@ -1419,7 +1401,6 @@
         const totalDist = Math.hypot(ball.vx * dt, ball.vy * dt);
         const steps = Math.max(1, Math.ceil(totalDist / 4));
         const subDt = dt / steps;
-        const isPierce = game.pierceTimer > 0;
 
         for (let s = 0; s < steps; s++) {
           ball.x += ball.vx * subDt;
@@ -1473,7 +1454,6 @@
           }
 
           // Block collisions
-          const stillOverlapping = new Set();
           let bouncedThisSubstep = false;
 
           for (const block of game.blocks) {
@@ -1486,73 +1466,55 @@
             const distSq = dx * dx + dy * dy;
 
             if (distSq <= ball.r * ball.r) {
-              stillOverlapping.add(block.id);
-
-              if (block.kind === "wall" || !isPierce) {
-                if (!bouncedThisSubstep) {
-                  // Resolve bounce
-                  if (distSq > 0.0001) {
-                    const dist = Math.sqrt(distSq);
-                    const nx = dx / dist;
-                    const ny = dy / dist;
-                    // Push ball out
-                    ball.x = closestX + nx * (ball.r + 0.2);
-                    ball.y = closestY + ny * (ball.r + 0.2);
-                    // Reflect velocity across normal
-                    const dot = ball.vx * nx + ball.vy * ny;
-                    if (dot < 0) {
-                      ball.vx -= 2 * dot * nx;
-                      ball.vy -= 2 * dot * ny;
-                    }
-                  } else {
-                    // Fallback if center inside block
-                    const penLeft = ball.x - block.x;
-                    const penRight = block.x + block.w - ball.x;
-                    const penTop = ball.y - block.y;
-                    const penBottom = block.y + block.h - ball.y;
-                    const minPen = Math.min(penLeft, penRight, penTop, penBottom);
-                    if (minPen === penLeft || minPen === penRight) {
-                      ball.vx = -ball.vx;
-                    } else {
-                      ball.vy = -ball.vy;
-                    }
+              if (!bouncedThisSubstep) {
+                // Resolve bounce
+                if (distSq > 0.0001) {
+                  const dist = Math.sqrt(distSq);
+                  const nx = dx / dist;
+                  const ny = dy / dist;
+                  // Push ball out
+                  ball.x = closestX + nx * (ball.r + 0.2);
+                  ball.y = closestY + ny * (ball.r + 0.2);
+                  // Reflect velocity across normal
+                  const dot = ball.vx * nx + ball.vy * ny;
+                  if (dot < 0) {
+                    ball.vx -= 2 * dot * nx;
+                    ball.vy -= 2 * dot * ny;
                   }
-
-                  // Prevent soft-locks if bouncing between walls for too long
-                  if (ball.sinceTouch > 14 && block.kind === "wall") {
-                    const jitter = (Math.random() - 0.5) * 0.25;
-                    const spd = Math.hypot(ball.vx, ball.vy);
-                    const ang = Math.atan2(ball.vy, ball.vx) + jitter;
-                    ball.vx = Math.cos(ang) * spd;
-                    ball.vy = Math.sin(ang) * spd;
-                  }
-
-                  enforceMinVerticalSpeed(ball);
-                  bouncedThisSubstep = true;
-                }
-
-                if (block.kind === "wall") {
-                  sfx.metal();
-                  spawnParticles(closestX, closestY, "#94a3b8", 5, 0.45);
                 } else {
-                  ball.sinceTouch = 0;
-                  damageBlock(block, false, false);
+                  // Fallback if center inside block
+                  const penLeft = ball.x - block.x;
+                  const penRight = block.x + block.w - ball.x;
+                  const penTop = ball.y - block.y;
+                  const penBottom = block.y + block.h - ball.y;
+                  const minPen = Math.min(penLeft, penRight, penTop, penBottom);
+                  if (minPen === penLeft || minPen === penRight) {
+                    ball.vx = -ball.vx;
+                  } else {
+                    ball.vy = -ball.vy;
+                  }
                 }
-              } else {
-                // Pierce mode against destructible block: slice right through without bouncing
-                if (!ball.piercingBlocks.has(block.id)) {
-                  ball.piercingBlocks.add(block.id);
-                  ball.sinceTouch = 0;
-                  damageBlock(block, true, false);
-                }
-              }
-            }
-          }
 
-          // Clean up exited blocks from pierce tracking
-          for (const id of ball.piercingBlocks) {
-            if (!stillOverlapping.has(id)) {
-              ball.piercingBlocks.delete(id);
+                // Prevent soft-locks if bouncing between walls for too long
+                if (ball.sinceTouch > 14 && block.kind === "wall") {
+                  const jitter = (Math.random() - 0.5) * 0.25;
+                  const spd = Math.hypot(ball.vx, ball.vy);
+                  const ang = Math.atan2(ball.vy, ball.vx) + jitter;
+                  ball.vx = Math.cos(ang) * spd;
+                  ball.vy = Math.sin(ang) * spd;
+                }
+
+                enforceMinVerticalSpeed(ball);
+                bouncedThisSubstep = true;
+              }
+
+              if (block.kind === "wall") {
+                sfx.metal();
+                spawnParticles(closestX, closestY, "#94a3b8", 5, 0.45);
+              } else {
+                ball.sinceTouch = 0;
+                damageBlock(block, false, false);
+              }
             }
           }
         }
@@ -1588,9 +1550,6 @@
           if (game.wideTimer === 0) {
             game.paddle.targetW = PADDLE_BASE_W;
           }
-        }
-        if (game.pierceTimer > 0) {
-          game.pierceTimer = Math.max(0, game.pierceTimer - dt);
         }
 
         // Update balls
@@ -1901,7 +1860,7 @@
         // Paddle
         if (game.mode !== "select") {
           const p = game.paddle;
-          const pColor = game.pierceTimer > 0 ? "#f472b6" : "#38bdf8";
+          const pColor = "#38bdf8";
           drawRoundedRect(p.x, PADDLE_Y, p.w, PADDLE_H, 7);
           const pGrad = ctx.createLinearGradient(p.x, PADDLE_Y, p.x, PADDLE_Y + PADDLE_H);
           pGrad.addColorStop(0, p.flash > 0 ? "#ffffff" : "#e0f2fe");
@@ -1914,27 +1873,21 @@
         }
 
         // Balls & Trails
-        const pierceActive = game.pierceTimer > 0;
-        const ballColor = pierceActive ? "#f472b6" : "#f8fafc";
-        const glowColor = pierceActive ? "#f472b6" : "#38bdf8";
-
         for (const b of game.balls) {
           // Trail
           for (let i = 0; i < b.trail.length; i++) {
             const pt = b.trail[i];
             const ratio = (i + 1) / b.trail.length;
-            ctx.fillStyle = pierceActive
-              ? `rgba(244, 114, 182, ${ratio * 0.35})`
-              : `rgba(56, 189, 248, ${ratio * 0.28})`;
+            ctx.fillStyle = `rgba(56, 189, 248, ${ratio * 0.28})`;
             ctx.beginPath();
             ctx.arc(pt.x, pt.y, b.r * ratio * 0.9, 0, Math.PI * 2);
             ctx.fill();
           }
 
           // Ball body
-          ctx.shadowColor = glowColor;
-          ctx.shadowBlur = pierceActive ? 16 : 11;
-          ctx.fillStyle = ballColor;
+          ctx.shadowColor = "#38bdf8";
+          ctx.shadowBlur = 11;
+          ctx.fillStyle = "#f8fafc";
           ctx.beginPath();
           ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
           ctx.fill();
